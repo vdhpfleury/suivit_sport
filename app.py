@@ -296,10 +296,11 @@ with tab_jour:
                      "Ecart": consomme - cible})
     df_cat = pd.DataFrame(rows)
     st.dataframe(
-        df_cat.style.format({"Cible": "{:.0f}", "Consomme": "{:.0f}", "Ecart": "{:+.0f}"})
-        .applymap(lambda v: "color: #C00000;" if isinstance(v, (int, float)) and v < 0 else "color: #2E7D32;",
-                  subset=["Ecart"]),
-        use_container_width=True, hide_index=True,
+        df_cat.style
+        .format({"Cible": "{:.0f}", "Consomme": "{:.0f}", "Ecart": "{:+.0f}"})
+        .map(lambda v: "color: #C00000;" if v < 0 else "color: #2E7D32;", subset=["Ecart"]),
+        use_container_width=True,
+        hide_index=True,
     )
 
     fig_cat = go.Figure()
