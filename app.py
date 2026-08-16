@@ -170,10 +170,11 @@ def load_daily_log():
         if c not in df.columns:
             df[c] = "" if c == "repas" else 0
     df = df[DAILY_COLS].copy()
-    if not df.empty:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        df = _clean_numeric(df, list(CATEGORIES.keys())).fillna({c: 0 for c in CATEGORIES})
-        df = df.dropna(subset=["date"])
+    # conversion de type toujours appliquee (meme sur un df vide) pour que la colonne
+    # "date" reste bien de dtype datetime64 en aval (ex. dans save_meal_entry)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = _clean_numeric(df, list(CATEGORIES.keys())).fillna({c: 0 for c in CATEGORIES})
+    df = df.dropna(subset=["date"])
     return df.sort_values(["date", "repas"])
 
 
@@ -187,7 +188,7 @@ def save_meal_entry(entry_date, type_journee, repas, quantities):
     new_row = {"date": pd.Timestamp(entry_date), "type_journee": type_journee, "repas": repas, **quantities}
     df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True).sort_values(["date", "repas"])
     df_out = df.copy()
-    df_out["date"] = df_out["date"].dt.strftime("%Y-%m-%d")
+    df_out["date"] = pd.to_datetime(df_out["date"]).dt.strftime("%Y-%m-%d")
     conn.update(worksheet=WS_DAILY, data=df_out)
 
 
@@ -220,10 +221,9 @@ def load_measurements():
         if c not in df.columns:
             df[c] = None
     df = df[MEASURE_COLS].copy()
-    if not df.empty:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        df = _clean_numeric(df, list(MEASURE_FIELDS.keys()))
-        df = df.dropna(subset=["date"])
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = _clean_numeric(df, list(MEASURE_FIELDS.keys()))
+    df = df.dropna(subset=["date"])
     return df.sort_values("date")
 
 
@@ -233,7 +233,7 @@ def save_measurement(entry_date, values):
     new_row = {"date": pd.Timestamp(entry_date), **values}
     df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True).sort_values("date")
     df_out = df.copy()
-    df_out["date"] = df_out["date"].dt.strftime("%Y-%m-%d")
+    df_out["date"] = pd.to_datetime(df_out["date"]).dt.strftime("%Y-%m-%d")
     conn.update(worksheet=WS_MEASURE, data=df_out)
 
 
@@ -394,8 +394,8 @@ with tab_jour:
     df_cat = pd.DataFrame(rows)
     st.dataframe(
         df_cat.style.format({"Cible": "{:.0f}", "Consomme": "{:.0f}", "Ecart": "{:+.0f}"})
-        .applymap(lambda v: "color: #C00000;" if isinstance(v, (int, float)) and v < 0 else "color: #2E7D32;",
-                  subset=["Ecart"]),
+        .map(lambda v: "color: #C00000;" if isinstance(v, (int, float)) and v < 0 else "color: #2E7D32;",
+             subset=["Ecart"]),
         use_container_width=True, hide_index=True,
     )
 
