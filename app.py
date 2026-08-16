@@ -22,6 +22,20 @@ from streamlit_gsheets import GSheetsConnection
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# Verification precoce : sans "type = service_account" dans les secrets, la
+# connexion bascule silencieusement en mode "Public Spreadsheet" (lecture
+# seule) et toute tentative d'ecriture plante avec une erreur peu comprehensible.
+_gs_secrets = st.secrets.get("connections", {}).get("gsheets", {})
+if _gs_secrets.get("type") != "service_account":
+    st.error(
+        "⚠️ Configuration Google Sheets incomplete : le champ `type = \"service_account\"` "
+        "est manquant (ou incorrect) dans secrets.toml. Sans lui, l'app peut lire le Sheet "
+        "mais pas y ecrire. Verifie tes secrets (en local dans `.streamlit/secrets.toml`, ou "
+        "dans les parametres 'Secrets' de Streamlit Cloud) par rapport a `secrets.toml.example` "
+        "- voir la section 'Depannage' du README."
+    )
+    st.stop()
+
 WS_DAILY = "daily_log"
 WS_MEASURE = "measurements"
 WS_PROFILE = "profile"
