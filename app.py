@@ -74,6 +74,43 @@ NUTRI = {
 ACTIVITY_FACTOR = {"Repos": 1.30, "Musculation": 1.55, "Basket": 1.65, "Musculation + Basket": 1.75}
 KCAL_ADJUST = {"Repos": -400, "Musculation": -100, "Basket": 50, "Musculation + Basket": 150}
 
+# Decoupage de la journee en repas, par type de journee, avec un "poids" relatif
+# indiquant comment la cible quotidienne de chaque categorie se repartit entre les
+# repas ou elle intervient (le poids n'a pas besoin de sommer a 1 : la normalisation
+# est faite automatiquement dans get_meal_targets).
+MEAL_STRUCTURE = {
+    "Repos": {
+        "Petit-dejeuner": {"oeufs": 1.5, "fromage_blanc": 1, "lait": 1, "feculents": 0.5, "fruits": 1, "sucres": 1},
+        "Dejeuner": {"viande_poisson": 1, "oeufs": 1, "feculents": 2, "legumes": 1, "huile_olive": 1},
+        "Collation": {"fruits": 1.5, "oleagineux": 1},
+        "Diner": {"viande_poisson": 1.5, "feculents": 1.5, "legumes": 1.5, "huile_olive": 1},
+        "Avant sommeil": {"fromage_blanc": 1, "feculents": 0.3, "fruits": 0.5},
+    },
+    "Musculation": {
+        "Petit-dejeuner": {"oeufs": 1, "fromage_blanc": 1, "lait": 1, "feculents": 0.5, "fruits": 1, "oleagineux": 1},
+        "Dejeuner": {"viande_poisson": 1, "feculents": 1.5, "legumes": 1, "huile_olive": 1, "fruits": 1},
+        "Avant musculation": {"fromage_blanc": 1, "feculents": 1, "fruits": 1, "sucres": 1},
+        "Apres musculation": {"viande_poisson": 1, "feculents": 1.5, "legumes": 1, "huile_olive": 1},
+        "Avant sommeil": {"fromage_blanc": 1.5, "feculents": 0.3, "fruits": 1},
+    },
+    "Basket": {
+        "Petit-dejeuner": {"oeufs": 1, "fromage_blanc": 1, "lait": 1, "feculents": 0.5, "fruits": 1, "oleagineux": 1},
+        "Dejeuner": {"viande_poisson": 1, "feculents": 1.5, "legumes": 1, "huile_olive": 1, "fruits": 1},
+        "Avant basket": {"fromage_blanc": 1, "feculents": 1, "fruits": 1, "sucres": 1},
+        "Apres basket": {"lait": 1.5, "fruits": 1},
+        "Diner": {"viande_poisson": 1, "feculents": 1.5, "legumes": 1, "huile_olive": 1},
+        "Avant sommeil": {"fromage_blanc": 1.5, "feculents": 0.3, "fruits": 1},
+    },
+    "Musculation + Basket": {
+        "Petit-dejeuner": {"oeufs": 1, "fromage_blanc": 1, "lait": 1, "feculents": 0.5, "fruits": 1, "oleagineux": 1},
+        "Dejeuner": {"viande_poisson": 1, "feculents": 1.5, "legumes": 1, "huile_olive": 1, "fruits": 1},
+        "Avant entrainement": {"fromage_blanc": 1, "feculents": 1, "fruits": 1, "sucres": 1},
+        "Apres entrainement": {"lait": 1.5, "fruits": 1, "viande_poisson": 0.5},
+        "Diner": {"viande_poisson": 1, "feculents": 1.5, "legumes": 1, "huile_olive": 1},
+        "Avant sommeil": {"fromage_blanc": 1.5, "feculents": 0.3, "fruits": 1},
+    },
+}
+
 MEASURE_FIELDS = {
     "poids": "Poids (kg)",
     "tour_taille": "Tour de taille (cm)",
@@ -86,7 +123,7 @@ MEASURE_FIELDS = {
 
 DEFAULT_PROFILE = {"taille_cm": 195, "age": 24, "poids_defaut_kg": 88.0}
 
-DAILY_COLS = ["date", "type_journee"] + list(CATEGORIES.keys())
+DAILY_COLS = ["date", "type_journee", "repas"] + list(CATEGORIES.keys())
 MEASURE_COLS = ["date"] + list(MEASURE_FIELDS.keys())
 PROFILE_COLS = list(DEFAULT_PROFILE.keys())
 
@@ -131,23 +168,46 @@ def load_daily_log():
         df = pd.DataFrame(columns=DAILY_COLS)
     for c in DAILY_COLS:
         if c not in df.columns:
-            df[c] = 0
+            df[c] = "" if c == "repas" else 0
     df = df[DAILY_COLS].copy()
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
         df = _clean_numeric(df, list(CATEGORIES.keys())).fillna({c: 0 for c in CATEGORIES})
         df = df.dropna(subset=["date"])
-    return df.sort_values("date")
+    return df.sort_values(["date", "repas"])
 
 
-def save_daily_entry(entry_date, type_journee, quantities):
+def save_meal_entry(entry_date, type_journee, repas, quantities):
+    """Enregistre (ou remplace) les quantites d'un repas donne pour une date donnee,
+    sans toucher aux autres repas de la meme journee."""
     df = load_daily_log()
-    df = df[df["date"] != pd.Timestamp(entry_date)]
-    new_row = {"date": pd.Timestamp(entry_date), "type_journee": type_journee, **quantities}
-    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True).sort_values("date")
+    df = df[~((df["date"] == pd.Timestamp(entry_date)) & (df["repas"] == repas))]
+    # garde le type_journee coherent sur tous les repas deja enregistres ce jour-la
+    df.loc[df["date"] == pd.Timestamp(entry_date), "type_journee"] = type_journee
+    new_row = {"date": pd.Timestamp(entry_date), "type_journee": type_journee, "repas": repas, **quantities}
+    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True).sort_values(["date", "repas"])
     df_out = df.copy()
     df_out["date"] = df_out["date"].dt.strftime("%Y-%m-%d")
     conn.update(worksheet=WS_DAILY, data=df_out)
+
+
+def get_day_totals(daily_log, entry_date):
+    """Additionne les quantites de tous les repas enregistres pour une date donnee."""
+    rows = daily_log[daily_log["date"] == pd.Timestamp(entry_date)]
+    if rows.empty:
+        return {c: 0.0 for c in CATEGORIES}
+    return {c: float(rows[c].sum()) for c in CATEGORIES}
+
+
+def aggregate_daily_log_by_date(daily_log):
+    """Regroupe le log (potentiellement plusieurs lignes par date, une par repas)
+    en un total par date, pour les vues qui raisonnent au niveau de la journee."""
+    if daily_log.empty:
+        return daily_log
+    agg = daily_log.groupby("date", as_index=False).agg(
+        {**{c: "sum" for c in CATEGORIES}, "type_journee": "first"}
+    )
+    return agg.sort_values("date")
 
 
 def load_measurements():
@@ -215,6 +275,26 @@ def calc_totals_from_quantities(quantities):
     return {"kcal": kcal, "proteines": protein, "lipides": fat, "glucides": carbs}
 
 
+def get_meal_targets(type_journee):
+    """Repartit la cible quotidienne de chaque categorie entre les repas de la
+    journee, au prorata des poids definis dans MEAL_STRUCTURE. Renvoie
+    {repas: {categorie: quantite_cible}}."""
+    structure = MEAL_STRUCTURE[type_journee]
+    poids_total_par_cat = {}
+    for repas, cats in structure.items():
+        for cat, poids in cats.items():
+            poids_total_par_cat[cat] = poids_total_par_cat.get(cat, 0) + poids
+
+    meal_targets = {}
+    for repas, cats in structure.items():
+        meal_targets[repas] = {}
+        for cat, poids in cats.items():
+            cible_jour = TARGETS[cat][type_journee]
+            total_poids = poids_total_par_cat[cat]
+            meal_targets[repas][cat] = cible_jour * poids / total_poids if total_poids > 0 else 0
+    return meal_targets
+
+
 # ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
@@ -252,41 +332,58 @@ with tab_jour:
     col_date, col_type = st.columns([1, 1])
     with col_date:
         selected_date = st.date_input("Date", value=date.today(), key="daily_date")
+
     daily_log = load_daily_log()
-    existing = daily_log[daily_log["date"] == pd.Timestamp(selected_date)]
-    default_type = existing.iloc[0]["type_journee"] if not existing.empty else "Musculation"
+    day_rows = daily_log[daily_log["date"] == pd.Timestamp(selected_date)]
+    default_type = day_rows.iloc[0]["type_journee"] if not day_rows.empty else "Musculation"
     with col_type:
         type_journee = st.selectbox(
             "Type de journee", DAY_TYPES, index=DAY_TYPES.index(default_type), key="daily_type"
         )
 
-    st.subheader("Aliments consommes")
-    with st.form("daily_form"):
-        quantities = {}
-        cols = st.columns(2)
-        for i, (cat_key, (unit, label)) in enumerate(CATEGORIES.items()):
-            default_val = 0.0
-            if not existing.empty and cat_key in existing.columns:
-                default_val = float(existing.iloc[0][cat_key]) if pd.notna(existing.iloc[0][cat_key]) else 0.0
-            with cols[i % 2]:
-                quantities[cat_key] = st.number_input(
-                    f"{label} ({unit})", min_value=0.0, value=default_val, step=1.0, key=f"qty_{cat_key}"
-                )
-        submitted = st.form_submit_button("💾 Enregistrer la journee")
-        if submitted:
-            save_daily_entry(selected_date, type_journee, quantities)
-            st.success(f"Journee du {selected_date.strftime('%d/%m/%Y')} enregistree.")
-            st.rerun()
+    st.subheader("Aliments consommes - par repas")
+    st.caption("L'objectif affiche a cote de chaque aliment est la cible pour CE repas "
+               "(la cible du jour est repartie entre les repas concernes).")
 
-    # recharge apres eventuel enregistrement
+    meal_targets = get_meal_targets(type_journee)
+
+    for repas, cat_targets in meal_targets.items():
+        existing_meal = day_rows[day_rows["repas"] == repas]
+        with st.expander(f"🍽️ {repas}", expanded=False):
+            with st.form(f"form_{repas}"):
+                quantities = {}
+                cols = st.columns(2)
+                for i, cat_key in enumerate(cat_targets.keys()):
+                    unit, label = CATEGORIES[cat_key]
+                    cible_repas = cat_targets[cat_key]
+                    default_val = 0.0
+                    if not existing_meal.empty and pd.notna(existing_meal.iloc[0][cat_key]):
+                        default_val = float(existing_meal.iloc[0][cat_key])
+                    with cols[i % 2]:
+                        quantities[cat_key] = st.number_input(
+                            f"{label} ({unit}) — objectif repas : {cible_repas:.0f}",
+                            min_value=0.0, value=default_val, step=1.0,
+                            key=f"qty_{repas}_{cat_key}",
+                        )
+                submitted = st.form_submit_button(f"💾 Enregistrer {repas}")
+                if submitted:
+                    save_meal_entry(selected_date, type_journee, repas, quantities)
+                    st.success(f"{repas} du {selected_date.strftime('%d/%m/%Y')} enregistre.")
+                    st.rerun()
+
+            # petit bilan du repas (macro estimees a partir de ce qui est deja enregistre)
+            if not existing_meal.empty:
+                meal_quantities = {c: float(existing_meal.iloc[0][c]) for c in cat_targets}
+                meal_totaux = calc_totals_from_quantities(meal_quantities)
+                st.caption(f"Deja enregistre pour ce repas : ~{meal_totaux['kcal']:.0f} kcal, "
+                           f"{meal_totaux['proteines']:.0f} g proteines")
+
+    # recharge apres eventuel enregistrement, puis agrege tous les repas de la journee
     daily_log = load_daily_log()
-    existing = daily_log[daily_log["date"] == pd.Timestamp(selected_date)]
-    current_quantities = (
-        {cat: float(existing.iloc[0][cat]) for cat in CATEGORIES} if not existing.empty else {c: 0.0 for c in CATEGORIES}
-    )
+    current_quantities = get_day_totals(daily_log, selected_date)
 
     st.divider()
-    st.subheader("Comparaison objectif vs realise - par categorie")
+    st.subheader("Comparaison objectif vs realise - par categorie (total du jour)")
 
     rows = []
     for cat_key, (unit, label) in CATEGORIES.items():
@@ -296,11 +393,10 @@ with tab_jour:
                      "Ecart": consomme - cible})
     df_cat = pd.DataFrame(rows)
     st.dataframe(
-        df_cat.style
-        .format({"Cible": "{:.0f}", "Consomme": "{:.0f}", "Ecart": "{:+.0f}"})
-        .map(lambda v: "color: #C00000;" if v < 0 else "color: #2E7D32;", subset=["Ecart"]),
-        use_container_width=True,
-        hide_index=True,
+        df_cat.style.format({"Cible": "{:.0f}", "Consomme": "{:.0f}", "Ecart": "{:+.0f}"})
+        .applymap(lambda v: "color: #C00000;" if isinstance(v, (int, float)) and v < 0 else "color: #2E7D32;",
+                  subset=["Ecart"]),
+        use_container_width=True, hide_index=True,
     )
 
     fig_cat = go.Figure()
@@ -344,7 +440,8 @@ with tab_semaine:
 
     daily_log = load_daily_log()
     mask = (daily_log["date"] >= pd.Timestamp(start_date)) & (daily_log["date"] <= pd.Timestamp(end_date))
-    period_log = daily_log[mask].sort_values("date")
+    period_log_raw = daily_log[mask].sort_values("date")
+    period_log = aggregate_daily_log_by_date(period_log_raw)
 
     if period_log.empty:
         st.info("Aucune journee enregistree sur cette periode. Renseigne des journees dans l'onglet 'Suivi quotidien'.")
@@ -409,7 +506,10 @@ with tab_semaine:
         st.plotly_chart(fig_cat_week, use_container_width=True)
 
         with st.expander("Voir le detail jour par jour"):
-            st.dataframe(period_log, use_container_width=True, hide_index=True)
+            st.dataframe(period_log.sort_values("date", ascending=False), use_container_width=True, hide_index=True)
+        with st.expander("Voir le detail repas par repas"):
+            st.dataframe(period_log_raw.sort_values(["date", "repas"], ascending=[False, True]),
+                         use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------------------
 # TAB 3 : POIDS & MENSURATIONS
